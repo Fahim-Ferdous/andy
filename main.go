@@ -1,9 +1,32 @@
+/*
+Copyright © 2023 Fahim Ferdous
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -42,20 +65,16 @@ func init() {
 	if err != nil {
 		log.Fatalf("Invalid bot parameters: %v", err)
 	}
-
-	if err != nil {
-		log.Fatalf("Could not create new SSH agent: %v", err)
-	}
 }
 
 // CheckRepoExists We use git ls-remote to see if the user has provided with a valid git repo url.
-func CheckRepoExists(repo string) bool {
+func CheckRepoExists(repo string) error {
 	rem := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
 		URLs: []string{repo},
 	})
 
 	_, err := rem.List(&git.ListOptions{})
-	return err == nil
+	return err
 }
 
 func RepoClonePath(dataPath string, u *transport.Endpoint) string {
@@ -91,8 +110,8 @@ func Handle_cloc(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		return
 	}
 
-	if !CheckRepoExists(repo) {
-		log.Println("Repo does not exist:", repo)
+	if err = CheckRepoExists(repo); err != nil {
+		log.Printf("Repo does not exist: %s, %v", repo, err)
 		s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 			Content: "Invalid repo URL",
 		})
@@ -104,23 +123,33 @@ func Handle_cloc(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		CleanAfterClone(cloneDest)
 	}()
 
-	log.Println("Cloning")
+	log.Println("Cloning into:", cloneDest)
 	ctxClone, cancel := context.WithDeadline(
 		context.Background(),
-		time.Now().Add(time.Minute),
+		time.Now().Add(5*time.Minute),
 	)
 	defer cancel()
+	// TODO: Handle cancelation from Discord.
 	if _, err = git.PlainCloneContext(ctxClone, cloneDest, false, &git.CloneOptions{
-		URL:   repo,
-		Depth: 1,
-		// Progress: nil, // TODO: Parse output for progress report.
+		URL:      repo,
+		Depth:    1,
+		Progress: os.Stderr,
+		Tags:     git.TagFollowing,
 	}); err != nil {
-		log.Println("Error cloning repo:", err)
+		if err == context.DeadlineExceeded {
+			log.Println("Deadline exceeded:", cloneDest)
+			s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
+				Content: "Took too long to clone the repo.",
+			})
+		} else {
+			log.Println("Error cloning repo:", err)
+		}
+		return
 	}
 
 	ctx, cancel := context.WithDeadline(
 		context.Background(),
-		time.Now().Add(time.Minute),
+		time.Now().Add(3*time.Minute),
 	)
 	defer cancel()
 
@@ -205,10 +234,13 @@ func Handle_cloc(s *discordgo.Session, i *discordgo.InteractionCreate) {
 		strconv.Itoa(t.Lines),
 	})
 
+	tb.SetCaption(true, fmt.Sprintf("Source line count from: %s", repo))
 	tb.AppendBulk(rows)
 
 	tb.Render()
 	builder.WriteString("\n```")
+	// TODO: Test: split large tables into multiple replies?
+	// TODO: Handle error for calling Discord's functions.
 	s.FollowupMessageCreate(i.Interaction, true, &discordgo.WebhookParams{
 		Content: builder.String(),
 	})
