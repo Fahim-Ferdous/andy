@@ -1,0 +1,39 @@
+name: goreleaser
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v5
+        with:
+          distribution: goreleaser
+          version: latest
+          install-only: true
+      - name: Setup Node.js for semantic-release
+        uses: actions/setup-node@v3
+        with:
+          node-version: "lts/*"
+        # TODO: Maybe sign the binaries?
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx -p @semantic-release/changelog -p @semantic-release/exec -p @semantic-release/git semantic-release
