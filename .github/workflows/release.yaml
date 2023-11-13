@@ -16,7 +16,7 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-go@v4
@@ -32,6 +32,8 @@ jobs:
         with:
           node-version: "lts/*"
         # TODO: Maybe sign the binaries?
+      - name: Install semantic-release
+        run: npm ci
       - name: Run semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
